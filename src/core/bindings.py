@@ -41,8 +41,8 @@ for path in search_paths:
 
 if not _lib:
     raise ImportError(
-        f"Starfall C++ Çekirdek Kütüphanesi ({', '.join(lib_filenames)}) yüklenemedi! "
-        f"Lütfen C++ kodunu derleyin."
+        f"Flare hızlandırma kütüphanesi ({', '.join(lib_filenames)}) yüklenemedi. "
+        f"Paket eksik olabilir; uygulama Python yedek motoruyla çalışmaya devam eder."
     )
 
 # Fonksiyonların c-type tanımları

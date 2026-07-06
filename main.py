@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Flame (Powered by Starfall Core)
+Flame
 Pasif ilan/link dolandırıcılık risk analiz aracı.
 """
 

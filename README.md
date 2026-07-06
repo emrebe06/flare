@@ -1,60 +1,78 @@
 # Flare
 
-Flare, ilan ve iş ilanı dolandırıcılığına karşı pasif risk analizi yapan temiz paket sürümüdür.
+Flare; iş ilanı, ürün ilanı, ödeme linki ve mesaj metinlerini pasif şekilde inceleyen taşınabilir risk analiz aracıdır.
 
-Bu klasör çalıştırılabilir dağıtım içindir. C++ kaynak kodu veya header dosyası içermez. Native çekirdek yalnızca hazır binary olarak gelir:
+## Ne Söyler?
 
-- `native/libstarfall_core.dll` Windows için
-- `native/libstarfall_core.so` Linux için
-- `native/libstarfall_core.dylib` macOS için
+Flare özellikle iş ilanlarında şu tarz net karar üretir:
 
-## Ne Analiz Eder?
+- `Başvurulabilir`
+- `Dikkatli başvur / önce sor`
+- `Doğrula, sonra başvur`
+- `Başvurma`
+- `Başvurma / önce doğrula`
 
-Flare şu durumları ayrı ayrı anlamaya çalışır:
+Ayrıca şunları raporlar:
 
-- Gerçek sitede kötü niyetli ilan veya ilan sahibi
-- Sahte site üzerinden IBAN / ödeme kandırması
-- İş ilanı bahanesiyle IBAN, Papara veya banka hesabı kullandırma
-- Başvuru, eğitim, evrak veya sigorta ücreti isteyen sahte iş akışları
-- Kapora, ön ödeme, rezervasyon veya acele baskısı
-- WhatsApp / Telegram / DM gibi platform dışı iletişim
-- Kimlik, SMS kodu, doğrulama kodu veya hesap ele geçirme senaryoları
-- Kurye, kargo veya sigorta ücreti bahanesi
+- Sahte iş ilanı olasılığı
+- Gereksiz/spam ilan olasılığı
+- İlan kalite puanı
+- Aşırı kapsam puanı
+- Tek ilanda birden fazla meslek istenip istenmediği
+- Maaş, lokasyon, çalışma şekli, görev tanımı ve başvuru kanalı eksikleri
+- IBAN, Papara, banka hesabı kullandırma, ön ödeme, evrak/sigorta ücreti ve WhatsApp'a taşıma riskleri
+- Çok eski veya okunamayan ilan uyarıları
 
-## İlk Kurulum
+## Kurulum
 
-Python 3.10 veya üstü önerilir.
+Python 3.10 veya üstü gerekir.
 
-Windows PowerShell veya terminalde:
+Windows:
 
-```bash
-cd "%USERPROFILE%\Desktop\flare"
+```bat
+cd flare
 python bootstrap_flare.py
+.venv\Scripts\python.exe run_flare.py
 ```
 
-Bu komut otomatik olarak:
+Linux/macOS:
 
-- `.venv` sanal ortamı oluşturur
-- `pip` günceller
-- `requirements.txt` içindeki paketleri kurar
-- native binary dosyalarını kontrol eder
-- testleri çalıştırır
-- örnek bir CLI analizi yapar
+```bash
+cd flare
+python3 bootstrap_flare.py
+.venv/bin/python run_flare.py
+```
 
 ## Hızlı Kullanım
 
-CLI ile örnek analiz:
-
-```bash
-python run_flare.py --cli "https://www.sahibinden.com/ilan/vasita-otomobil" "kapora at WhatsApp'tan yaz IBAN veriyorum"
-```
-
-GUI açmak için:
+GUI:
 
 ```bash
 python run_flare.py
 ```
 
-## Önemli Not
+CLI:
 
-Bu araç kesin hüküm vermez. Pasif risk sinyali üretir. Şüpheli durumda ödeme yapmayın, platform dışına çıkmayın, kanıtları saklayın ve resmi kanallardan doğrulama yapın.
+```bash
+python run_flare.py --cli "https://www.linkedin.com/jobs/view/123"
+python run_flare.py --cli "Evden paketleme işi WhatsApp IBAN Papara hesabı aç"
+```
+
+URL'den HTML indirip JSON/TXT rapor üretmek:
+
+```bash
+python download_and_scan.py "https://www.eleman.net/is-ilani/ornek" --format json
+python download_and_scan.py "https://www.eleman.net/is-ilani/ornek" --format txt
+```
+
+## HTML Okunamazsa
+
+Bazı siteler otomatik HTML indirmeyi engelleyebilir. Bu durumda:
+
+1. Linki normal tarayıcıda açın.
+2. Sayfayı HTML olarak kaydedin.
+3. Flare GUI içinde `Dosyadan Analiz Et (HTML/PDF)` ile yükleyin.
+
+## Güvenlik Notu
+
+Flare pasif analiz yapar. Exploit, brute-force, yetkisiz erişim veya koruma aşma denemesi yapmaz. Sonuçlar kesin hüküm değil, karar vermeye yardımcı risk sinyalidir.

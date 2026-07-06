@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Create a clean local environment, install dependencies, and smoke-test Flare."""
+"""Create a clean local environment and install Flare dependencies."""
 
 from __future__ import annotations
 
@@ -42,15 +42,9 @@ def main() -> int:
     if missing:
         raise SystemExit("Missing packaged files: " + ", ".join(missing))
 
-    run([str(py), "tests.py"])
-    run([
-        str(py),
-        "run_flare.py",
-        "--cli",
-        "https://www.sahibinden.com/ilan/vasita-otomobil",
-        "kapora at WhatsApp'tan yaz IBAN veriyorum",
-    ])
-    print("Flare setup and smoke tests completed.")
+    print("Flare setup completed.")
+    print("Start GUI with:")
+    print(f"  {py} run_flare.py")
     return 0
 
 

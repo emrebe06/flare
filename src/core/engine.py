@@ -9,6 +9,7 @@ from src.core.models import (
     COMMON_SCAM_PATTERNS
 )
 from src.core.scanners import DomainTools, TextScanner, safe_strip, sha256_text, normalize_text
+from src.core.listing_monitor import JobListingAnalyzer, ListingMonitor
 
 def clamp(value: int, low: int = 0, high: int = 100) -> int:
     return max(low, min(high, int(value)))
@@ -19,7 +20,7 @@ class RiskEngine:
         url_info: Dict[str, Any] = {}
         fetched_text = ""
 
-        # C++ secure database entegrasyonu (fallback ile)
+        # Paketli şüpheli veri kontrolü (fallback ile)
         is_blacklisted_iban = False
         is_blacklisted_phone = False
         try:
@@ -30,7 +31,11 @@ class RiskEngine:
 
         if safe_strip(data.url):
             url_info = DomainTools.parse_url(data.url)
-            signals.extend(self._analyze_url(url_info, data.platform_hint))
+            detected_platform = DomainTools.detect_platform(url_info.get("host", ""))
+            effective_platform = detected_platform if detected_platform != "unknown" else data.platform_hint
+            url_info["detected_platform"] = detected_platform
+            url_info["effective_platform"] = effective_platform
+            signals.extend(self._analyze_url(url_info, effective_platform))
 
             if data.allow_network_fetch:
                 headers_info = DomainTools.fetch_headers(url_info["normalized"])
@@ -55,7 +60,7 @@ class RiskEngine:
                     url_info["ssl"] = ssl_data
                     
                     # Akıllı SSL Analizi
-                    is_official = DomainTools.is_official(host, data.platform_hint)
+                    is_official = DomainTools.is_official(host, effective_platform)
                     if ssl_data.get("ok") and ssl_data.get("is_free_ssl") and not is_official:
                         signals.append(RiskSignal(
                             code="FREE_SSL_ON_SUSPICIOUS_DOMAIN",
@@ -75,12 +80,22 @@ class RiskEngine:
             fetched_text or "",
         ])
         text_info = TextScanner.scan(combined_text)
-        signals.extend(self._analyze_text(text_info, data.platform_hint, url_info))
+        effective_platform = url_info.get("effective_platform", data.platform_hint) if url_info else data.platform_hint
+        signals.extend(self._analyze_text(text_info, effective_platform, url_info))
         ml_info = self._analyze_ml(combined_text)
         signals.extend(self._signals_from_ml(ml_info))
         signals.extend(self._contextual_site_intent_signals(url_info, ml_info, signals))
+        listing_info = JobListingAnalyzer.analyze(
+            data.url,
+            data.pasted_text,
+            data.notes,
+            data.listing_title,
+            data.listing_kind,
+        )
+        signals.extend(self._signals_from_listing_info(listing_info))
+        signals = self._filter_job_listing_false_positives(signals, listing_info)
 
-        # C++ Gömülü veritabanı sorguları
+        # Paketli şüpheli veri sorguları
         ibans = text_info.get("ibans", [])
         phones = text_info.get("phones", [])
         if starfall_check_iban:
@@ -115,6 +130,12 @@ class RiskEngine:
         verdict = self._verdict(risk_score)
         summary = self._summary(verdict, risk_score, signals)
         recs = self._recommendations(risk_score, signals)
+        if listing_info.get("is_job_listing") or data.listing_kind == "job":
+            try:
+                result_stub = type("ResultStub", (), {"risk_score": risk_score, "verdict": verdict})()
+                listing_info["monitor"] = ListingMonitor().record(data, result_stub, listing_info)
+            except Exception as exc:
+                listing_info["monitor"] = {"error": f"{type(exc).__name__}: {exc}"}
 
         return AnalysisResult(
             app=APP_NAME,
@@ -127,6 +148,7 @@ class RiskEngine:
             url_info=url_info,
             text_info=text_info,
             ml_info=ml_info,
+            listing_info=listing_info,
             recommendations=recs,
         )
 
@@ -236,6 +258,237 @@ class RiskEngine:
             ))
 
         return out
+
+    def _signals_from_listing_info(self, listing_info: Dict[str, Any]) -> List[RiskSignal]:
+        signals: List[RiskSignal] = []
+        if not listing_info.get("is_job_listing"):
+            return signals
+
+        fake_probability = int(listing_info.get("fake_probability", 0))
+        useless_probability = int(listing_info.get("useless_probability", 0))
+        quality_score = int(listing_info.get("quality_score", 0))
+
+        signals.append(RiskSignal(
+            code="JOB_LISTING_DETECTED",
+            title="İş ilanı içeriği tespit edildi",
+            description="Metin iş ilanı veya iş başvurusu akışı gibi görünüyor; sahte ilan, gereksiz ilan ve ilan kalitesi ayrıca değerlendirildi.",
+            points=0,
+            severity="info",
+            evidence={
+                "classification": listing_info.get("classification"),
+                "quality_score": quality_score,
+                "work_mode": listing_info.get("work_mode"),
+            },
+        ))
+
+        level = listing_info.get("decision_level", "neutral")
+        decision_points = {"positive": -12, "neutral": 0, "warning": 12, "danger": 35}.get(level, 0)
+        decision_severity = {"positive": "positive", "neutral": "info", "warning": "medium", "danger": "critical"}.get(level, "info")
+        signals.append(RiskSignal(
+            code="JOB_APPLY_DECISION",
+            title=f"Başvuru kararı: {listing_info.get('apply_decision', '-')}",
+            description=listing_info.get("decision_reason", "İlan için başvuru kararı üretildi."),
+            points=decision_points,
+            severity=decision_severity,
+            evidence={
+                "decision": listing_info.get("apply_decision"),
+                "level": level,
+                "red_flags": listing_info.get("red_flags", []),
+                "yellow_flags": listing_info.get("yellow_flags", []),
+            },
+        ))
+
+        if int(listing_info.get("overload_score", 0)) >= 40:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_OVERLOADED_ROLE",
+                title="İlan kapsamı fazla geniş",
+                description="Tek pozisyonda birden fazla meslek veya çok fazla uzmanlık alanı isteniyor. Bu ilan sahte olmak zorunda değil; ama iş yükü ve beklenti görüşmede netleştirilmeli.",
+                points=12 if int(listing_info.get("overload_score", 0)) < 70 else 22,
+                severity="medium",
+                evidence={
+                    "overload_score": listing_info.get("overload_score"),
+                    "detected_roles": listing_info.get("detected_roles", []),
+                    "requirement_count": listing_info.get("requirement_count", 0),
+                },
+            ))
+
+        if listing_info.get("stale_days") is not None and int(listing_info.get("stale_days", 0)) >= 45:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_STALE",
+                title="İlan uzun süredir yayında olabilir",
+                description="İlan çok uzun süredir yayındaysa pozisyon kapanmış, güncellenmemiş veya sürekli dönen düşük kaliteli ilan olabilir.",
+                points=10,
+                severity="medium",
+                evidence={"stale_days": listing_info.get("stale_days")},
+            ))
+
+        if listing_info.get("is_known_job_board"):
+            signals.append(RiskSignal(
+                code="KNOWN_JOB_BOARD_LINK",
+                title="Bilinen iş ilanı platformu",
+                description="Bağlantı bilinen bir iş ilanı veya kariyer platformuna ait görünüyor; yine de ilan içeriği ve iletişim akışı ayrıca değerlendirilmelidir.",
+                points=-6,
+                severity="positive",
+                evidence={
+                    "platform": listing_info.get("source_platform"),
+                    "host": listing_info.get("source_host"),
+                },
+            ))
+
+        if int(listing_info.get("content_length", 0)) < 80:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_CONTENT_MISSING",
+                title="İlan metni eksik veya okunamadı",
+                description="Link iş ilanı gibi duruyor ancak sayfa metni okunamadı veya çok kısa kaldı. Lütfen ilanı tarayıcıdan HTML olarak kaydedip Dosyadan Analiz Et ile yükleyin ya da ilan açıklamasını metin kutusuna yapıştırın.",
+                points=50,
+                severity="medium",
+                evidence={
+                    "content_length": listing_info.get("content_length", 0),
+                    "missing_fields": listing_info.get("missing_fields", []),
+                },
+            ))
+
+        if fake_probability >= 75:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_FAKE_HIGH_RISK",
+                title="Sahte iş ilanı riski yüksek",
+                description="İlanda IBAN/Papara/banka hesabı kullandırma, ücret isteme, WhatsApp'a taşıma veya gerçekçi olmayan kazanç sinyalleri birleşiyor.",
+                points=35,
+                severity="critical",
+                evidence={
+                    "fake_probability": fake_probability,
+                    "keywords": listing_info.get("fake_job_keywords", []),
+                    "asks_money_or_account": listing_info.get("asks_money_or_account", False),
+                },
+            ))
+        elif fake_probability >= 45:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_SUSPICIOUS",
+                title="Şüpheli iş ilanı",
+                description="İlanda sahte veya kötü niyetli iş akışına benzeyen bazı işaretler bulundu.",
+                points=20,
+                severity="high",
+                evidence={
+                    "fake_probability": fake_probability,
+                    "keywords": listing_info.get("fake_job_keywords", []),
+                },
+            ))
+
+        if useless_probability >= 65:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_LOW_QUALITY_SPAM",
+                title="Gereksiz/spam iş ilanı olabilir",
+                description="İlan kısa, belirsiz, DM/WhatsApp odaklı veya iş tanımı açısından zayıf görünüyor.",
+                points=10,
+                severity="medium",
+                evidence={
+                    "useless_probability": useless_probability,
+                    "low_quality_keywords": listing_info.get("low_quality_keywords", []),
+                    "missing_fields": listing_info.get("missing_fields", []),
+                },
+            ))
+
+        if quality_score >= 70 and fake_probability < 35:
+            signals.append(RiskSignal(
+                code="JOB_LISTING_QUALITY_POSITIVE",
+                title="İlan bilgileri görece tutarlı",
+                description="Şirket, pozisyon, lokasyon veya iş tanımı gibi doğrulanabilir alanlar daha dolu görünüyor.",
+                points=-10,
+                severity="positive",
+                evidence={
+                    "quality_score": quality_score,
+                    "legit_keywords": listing_info.get("legit_keywords", []),
+                },
+            ))
+
+        return signals
+
+    def _filter_job_listing_false_positives(
+        self,
+        signals: List[RiskSignal],
+        listing_info: Dict[str, Any],
+    ) -> List[RiskSignal]:
+        if not listing_info.get("is_job_listing"):
+            return signals
+        if int(listing_info.get("quality_score", 0)) < 70:
+            return signals
+        if int(listing_info.get("fake_probability", 0)) >= 45:
+            return signals
+        if listing_info.get("asks_money_or_account"):
+            return signals
+
+        serious_payment = {
+            "iban", "papara", "havale", "eft", "kapora", "kart bilgisi",
+            "kredi karti", "kredi kartı", "cvv", "3d secure", "dekont",
+            "para gonder", "para gönder", "ininal",
+        }
+        weak_off_platform = {"dm", "instagram", "linkedin", "facebook"}
+        weak_social = {"musteri hizmetleri", "müşteri hizmetleri", "canli destek", "canlı destek"}
+        weak_pressure = {"hemen"}
+        serious_ml_hits = {
+            "iban", "papara", "kapora", "havale", "eft", "para transferi",
+            "komisyon", "on odeme", "ön ödeme", "evrak ucreti", "evrak ücreti",
+            "sigorta ucreti", "sigorta ücreti", "whatsapp",
+        }
+
+        filtered: List[RiskSignal] = []
+        for signal in signals:
+            code = signal.code
+            evidence = signal.evidence or {}
+
+            if code == "PAYMENT_KEYWORDS":
+                keywords = {normalize_text(item) for item in evidence.get("keywords", [])}
+                if keywords and not (keywords & {normalize_text(item) for item in serious_payment}):
+                    continue
+
+            if code == "PHISHING_KEYWORDS":
+                keywords = {normalize_text(item) for item in evidence.get("keywords", [])}
+                if keywords <= {"param guvende", "param güvende"}:
+                    continue
+
+            if code == "OFF_PLATFORM_CONTACT":
+                keywords = {normalize_text(item) for item in evidence.get("keywords", [])}
+                if keywords and keywords <= {normalize_text(item) for item in weak_off_platform}:
+                    continue
+
+            if code == "SOCIAL_ENGINEERING_SCRIPT":
+                keywords = {normalize_text(item) for item in evidence.get("keywords", [])}
+                if keywords and keywords <= {normalize_text(item) for item in weak_social}:
+                    continue
+
+            if code == "URGENCY_PRESSURE":
+                keywords = {normalize_text(item) for item in evidence.get("keywords", [])}
+                if keywords and keywords <= {normalize_text(item) for item in weak_pressure}:
+                    continue
+
+            if code == "SCAM_PATTERN_REGEX":
+                patterns = set(evidence.get("patterns", []))
+                if patterns and patterns <= {r"param\s*g[Ã¼u]vende", r"param\s*g[üu]vende"}:
+                    continue
+
+            if code.startswith("ML_SCENARIO_"):
+                hits = {normalize_text(item) for item in evidence.get("hits", [])}
+                if not (hits & {normalize_text(item) for item in serious_ml_hits}):
+                    continue
+
+            if code == "TRUSTED_SITE_MALICIOUS_LISTING_CONTEXT":
+                continue
+
+            filtered.append(signal)
+
+        if len(filtered) != len(signals):
+            filtered.append(RiskSignal(
+                code="JOB_LISTING_BOILERPLATE_FILTERED",
+                title="İş ilanı dışı sayfa metni süzüldü",
+                description="İlan kaliteli ve tutarlı göründüğü için Sahibinden/HTML sayfa şablonundan gelen genel ödeme, sosyal medya veya destek kelimeleri risk hesabından çıkarıldı.",
+                points=-8,
+                severity="positive",
+                evidence={
+                    "quality_score": listing_info.get("quality_score"),
+                    "classification": listing_info.get("classification"),
+                },
+            ))
+        return filtered
 
     def _analyze_url(self, info: Dict[str, Any], platform: str) -> List[RiskSignal]:
         signals: List[RiskSignal] = []
@@ -501,6 +754,22 @@ class RiskEngine:
             recs.insert(0, "İş ilanı bahanesiyle IBAN, Papara veya banka hesabı kullandırmayı kabul etmeyin; bu ciddi hukuki ve finansal risk doğurabilir.")
         if "ML_SCENARIO_JOB_UPFRONT_FEE" in codes:
             recs.insert(0, "İş başvurusu için eğitim, evrak, sigorta veya başvuru ücreti isteyen akışlara para göndermeyin.")
+        if "JOB_LISTING_FAKE_HIGH_RISK" in codes:
+            recs.insert(0, "Bu iş ilanında sahte ilan riski yüksek; IBAN/Papara/banka hesabı, kimlik veya ön ödeme paylaşmayın.")
+        if "JOB_APPLY_DECISION" in codes:
+            decision_signal = next((s for s in signals if s.code == "JOB_APPLY_DECISION"), None)
+            if decision_signal:
+                recs.insert(0, f"Başvuru kararı: {decision_signal.evidence.get('decision', '-')}. {decision_signal.description}")
+        if "JOB_LISTING_OVERLOADED_ROLE" in codes:
+            recs.insert(0, "Bu ilan birden fazla işi tek kişiden bekliyor olabilir; başvurmadan önce maaş, öncelikler, ekip yapısı ve günlük sorumlulukları net sorun.")
+        if "JOB_LISTING_STALE" in codes:
+            recs.insert(0, "İlan uzun süredir yayındaysa pozisyonun hâlâ açık olup olmadığını resmi kanaldan doğrulayın.")
+        if "JOB_LISTING_LOW_QUALITY_SPAM" in codes:
+            recs.insert(0, "İlan gereksiz/spam gibi görünüyorsa başvurmadan önce şirket adı, resmi kariyer sayfası, lokasyon ve iş tanımını doğrulayın.")
+        if "JOB_LISTING_CONTENT_MISSING" in codes:
+            recs.insert(0, "Analiz tamamlanamadı: ilan metni okunamadı. Tarayıcıda sayfayı açıp HTML olarak kaydedin ve GUI'de Dosyadan Analiz Et ile yükleyin; alternatif olarak ilan açıklamasını metin kutusuna yapıştırın.")
+        if "JOB_LISTING_QUALITY_POSITIVE" in codes:
+            recs.append("İlan daha tutarlı görünse bile başvuruyu resmi kariyer sayfası veya kurumsal e-posta üzerinden doğrulayın.")
         if "TRUSTED_SITE_MALICIOUS_LISTING_CONTEXT" in codes:
             recs.insert(0, "Site gerçek görünse bile ilan sahibinin istediği IBAN, kapora, WhatsApp veya hesap kullandırma akışını platform dışına taşımayın.")
         if "FAKE_SITE_PAYMENT_FRAUD_CONTEXT" in codes:

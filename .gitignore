@@ -1,9 +1,7 @@
-.venv/
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-flame_report_*.json
-flame_report_*.txt
-flame_report_*.html
+build/
+*.obj
+*.dll.a
+data/listing_watch.json
+reports/

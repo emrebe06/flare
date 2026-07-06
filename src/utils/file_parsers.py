@@ -7,17 +7,27 @@ class LinkAndTextHTMLParser(HTMLParser):
         super().__init__()
         self.texts: List[str] = []
         self.links: List[str] = []
+        self._skip_depth = 0
 
     def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
         text = data.strip()
         if text:
             self.texts.append(text)
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag in {"script", "style", "noscript", "svg", "canvas"}:
+            self._skip_depth += 1
+            return
         if tag == "a":
             for attr, val in attrs:
                 if attr == "href" and val:
                     self.links.append(val)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg", "canvas"} and self._skip_depth:
+            self._skip_depth -= 1
 
 def parse_html_file(file_path: str) -> Tuple[str, List[str]]:
     """
@@ -29,7 +39,7 @@ def parse_html_file(file_path: str) -> Tuple[str, List[str]]:
             content = f.read()
         parser = LinkAndTextHTMLParser()
         parser.feed(content)
-        joined_text = " ".join(parser.texts)
+        joined_text = "\n".join(parser.texts)
         return joined_text, parser.links
     except Exception as e:
         return f"HTML Okuma Hatası: {str(e)}", []

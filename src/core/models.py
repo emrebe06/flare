@@ -12,6 +12,7 @@ SAFE_NOTICE = (
 )
 
 OFFICIAL_DOMAINS = {
+    "auto": [],
     "sahibinden": [
         "sahibinden.com",
         "www.sahibinden.com",
@@ -54,10 +55,22 @@ OFFICIAL_DOMAINS = {
     "pazarama": [
         "pazarama.com",
         "www.pazarama.com",
-    ]
+    ],
+    "linkedin": ["linkedin.com", "www.linkedin.com", "tr.linkedin.com"],
+    "kariyer": ["kariyer.net", "www.kariyer.net"],
+    "yenibiris": ["yenibiris.com", "www.yenibiris.com"],
+    "eleman": ["eleman.net", "www.eleman.net"],
+    "iskur": ["iskur.gov.tr", "www.iskur.gov.tr", "esube.iskur.gov.tr"],
+    "indeed": ["indeed.com", "www.indeed.com", "tr.indeed.com"],
+    "secretcv": ["secretcv.com", "www.secretcv.com"],
+    "isbul": ["isbul.net", "www.isbul.net"],
+    "jooble": ["jooble.org", "tr.jooble.org"],
+    "glassdoor": ["glassdoor.com", "www.glassdoor.com"],
+    "remoteok": ["remoteok.com", "www.remoteok.com"],
 }
 
 MARK_NAMES = {
+    "auto": [],
     "sahibinden": [
         "sahibinden",
         "s-param",
@@ -108,7 +121,18 @@ MARK_NAMES = {
     "pazarama": [
         "pazarama",
         "pazarama-odeme",
-    ]
+    ],
+    "linkedin": ["linkedin", "linkedln", "linkendin", "lnkd"],
+    "kariyer": ["kariyer", "kariyer-net", "kariyernet"],
+    "yenibiris": ["yenibiris", "yeni-biris"],
+    "eleman": ["eleman", "eleman-net"],
+    "iskur": ["iskur", "işkur", "is-kur"],
+    "indeed": ["indeed"],
+    "secretcv": ["secretcv", "secret-cv"],
+    "isbul": ["isbul", "işbul"],
+    "jooble": ["jooble"],
+    "glassdoor": ["glassdoor"],
+    "remoteok": ["remoteok", "remote-ok"],
 }
 
 SUSPICIOUS_TLDS = {
@@ -185,8 +209,10 @@ class AnalysisInput:
     url: str = ""
     pasted_text: str = ""
     notes: str = ""
-    platform_hint: str = "sahibinden"
+    platform_hint: str = "auto"
     allow_network_fetch: bool = False
+    listing_title: str = ""
+    listing_kind: str = "auto"
 
 @dataclass
 class AnalysisResult:
@@ -201,6 +227,7 @@ class AnalysisResult:
     text_info: Dict[str, Any]
     ml_info: Dict[str, Any]
     recommendations: List[str]
+    listing_info: Dict[str, Any] = field(default_factory=dict)
     safety_notice: str = SAFE_NOTICE
 
     def to_dict(self) -> Dict[str, Any]:

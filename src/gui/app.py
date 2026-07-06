@@ -7,8 +7,9 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, Optional, Tuple
 
-from src.core.models import AnalysisInput, AnalysisResult, APP_NAME, APP_VERSION, CORE_TECH_NAME
+from src.core.models import AnalysisInput, AnalysisResult, APP_NAME, APP_VERSION
 from src.core.engine import RiskEngine
+from src.core.listing_monitor import ListingMonitor
 from src.utils.reporter import ReportWriter
 from src.utils.file_parsers import parse_html_file, parse_pdf_file
 from src.gui.styles import (
@@ -26,17 +27,10 @@ class FlameGUI(tk.Tk):
         
         # Risk motoru çekirdeği
         self.engine = RiskEngine()
+        self.monitor = ListingMonitor()
         self.current_result: Optional[AnalysisResult] = None
         self.worker_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
         
-        # C++ Starfall Core durumu
-        self.cpp_active = False
-        try:
-            from src.core.bindings import starfall_similarity
-            self.cpp_active = True
-        except ImportError:
-            pass
-
         # Temayı uygula
         style = ttk.Style()
         apply_modern_theme(style)
@@ -56,22 +50,9 @@ class FlameGUI(tk.Tk):
         title = ttk.Label(header, text="🔥 Flame", style="Header.TLabel")
         title.grid(row=0, column=0, sticky="w")
 
-        # C++ Starfall Core durum etiketi
-        status_text = f"Starfall Core C++: Aktif ⚡" if self.cpp_active else "Starfall Core C++: Pasif (Fallback) ⚠️"
-        status_style = COLOR_SUCCESS if self.cpp_active else COLOR_WARNING
-        
-        cpp_status = tk.Label(
-            header, 
-            text=status_text, 
-            font=("Consolas", 9, "bold"), 
-            bg=BG_DARK, 
-            fg=status_style
-        )
-        cpp_status.grid(row=0, column=2, sticky="e")
-
         subtitle = ttk.Label(
             header,
-            text=f"Pasif phishing, ilan ve link risk analiz sistemi. Powered by {CORE_TECH_NAME}.",
+            text="Pasif iş ilanı, ilan ve bağlantı risk analiz sistemi.",
             style="Muted.TLabel"
         )
         subtitle.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
@@ -82,20 +63,23 @@ class FlameGUI(tk.Tk):
 
         self.tab_analyze = ttk.Frame(self.notebook, padding=15)
         self.tab_result = ttk.Frame(self.notebook, padding=15)
+        self.tab_monitor = ttk.Frame(self.notebook, padding=15)
         self.tab_help = ttk.Frame(self.notebook, padding=15)
 
         self.notebook.add(self.tab_analyze, text="Analiz")
         self.notebook.add(self.tab_result, text="Sonuçlar")
+        self.notebook.add(self.tab_monitor, text="İlan İzleme")
         self.notebook.add(self.tab_help, text="Kılavuz & Yardım")
 
         self._build_analyze_tab()
         self._build_result_tab()
+        self._build_monitor_tab()
         self._build_help_tab()
 
     def _build_analyze_tab(self) -> None:
         f = self.tab_analyze
         f.columnconfigure(0, weight=1)
-        f.rowconfigure(4, weight=1)
+        f.rowconfigure(5, weight=1)
 
         # Üst Link / URL Girişi ve Dosya Analizi
         top_grid = ttk.Frame(f)
@@ -117,12 +101,17 @@ class FlameGUI(tk.Tk):
         # Seçenekler Paneli
         options = ttk.Frame(f, style="Card.TFrame", padding=10)
         options.grid(row=2, column=0, sticky="ew", pady=(0, 15))
-        options.columnconfigure(3, weight=1)
+        options.columnconfigure(5, weight=1)
 
         ttk.Label(options, text="Platform:", style="Card.TLabel").grid(row=0, column=0, sticky="w")
-        self.platform_var = tk.StringVar(value="sahibinden")
+        self.platform_var = tk.StringVar(value="auto")
         
-        platforms = ["sahibinden", "dolap", "letgo", "trendyol", "hepsiburada", "yemeksepeti", "getir", "n11", "ciceksepeti", "pazarama"]
+        platforms = [
+            "auto", "sahibinden", "linkedin", "kariyer", "yenibiris", "eleman", "iskur",
+            "indeed", "secretcv", "isbul", "jooble", "glassdoor", "remoteok",
+            "dolap", "letgo", "trendyol", "hepsiburada", "yemeksepeti", "getir",
+            "n11", "ciceksepeti", "pazarama",
+        ]
         platform_box = ttk.Combobox(
             options,
             textvariable=self.platform_var,
@@ -132,18 +121,33 @@ class FlameGUI(tk.Tk):
         )
         platform_box.grid(row=0, column=1, sticky="w", padx=(8, 20))
 
-        self.fetch_var = tk.BooleanVar(value=False)
+        self.fetch_var = tk.BooleanVar(value=True)
         self.fetch_check = ttk.Checkbutton(
             options,
             text="Ağdan pasif sayfa başlığı / SSL sertifikası oku",
             variable=self.fetch_var,
             style="TCheckbutton"
         )
-        self.fetch_check.configure(background=BG_CARD) # Kart içine uyum için
         self.fetch_check.grid(row=0, column=2, sticky="w")
 
+        ttk.Label(options, text="İlan Türü:", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.listing_kind_var = tk.StringVar(value="auto")
+        kind_box = ttk.Combobox(
+            options,
+            textvariable=self.listing_kind_var,
+            state="readonly",
+            values=["auto", "job", "marketplace"],
+            width=18
+        )
+        kind_box.grid(row=1, column=1, sticky="w", padx=(8, 20), pady=(8, 0))
+
+        ttk.Label(options, text="İlan Başlığı:", style="Card.TLabel").grid(row=1, column=2, sticky="w", pady=(8, 0))
+        self.listing_title_var = tk.StringVar()
+        title_entry = ttk.Entry(options, textvariable=self.listing_title_var)
+        title_entry.grid(row=1, column=3, columnspan=3, sticky="ew", padx=(8, 0), pady=(8, 0))
+
         # Metin Girişi
-        ttk.Label(f, text="Mesaj İçeriği / İlan Açıklaması / WhatsApp Konuşması", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky="w")
+        ttk.Label(f, text="Mesaj İçeriği / İlan Açıklaması / WhatsApp Konuşması", font=("Segoe UI", 10, "bold")).grid(row=4, column=0, sticky="w")
         
         # Standart Tkinter Text bileşenini modern renklere büründürüyoruz
         self.text_input = tk.Text(
@@ -156,10 +160,10 @@ class FlameGUI(tk.Tk):
             highlightthickness=1,
             padx=10, pady=10
         )
-        self.text_input.grid(row=4, column=0, sticky="nsew", pady=(6, 15))
+        self.text_input.grid(row=5, column=0, sticky="nsew", pady=(6, 15))
 
         # Notlar
-        ttk.Label(f, text="Ek Analiz Notları", font=("Segoe UI", 10, "bold")).grid(row=5, column=0, sticky="w")
+        ttk.Label(f, text="Ek Analiz Notları", font=("Segoe UI", 10, "bold")).grid(row=6, column=0, sticky="w")
         self.notes_input = tk.Text(
             f, height=3, wrap="word",
             bg=BG_CARD, fg=FG_LIGHT,
@@ -170,11 +174,11 @@ class FlameGUI(tk.Tk):
             highlightthickness=1,
             padx=10, pady=5
         )
-        self.notes_input.grid(row=6, column=0, sticky="ew", pady=(6, 15))
+        self.notes_input.grid(row=7, column=0, sticky="ew", pady=(6, 15))
 
         # Alt Butonlar ve Durum
         btns = ttk.Frame(f)
-        btns.grid(row=7, column=0, sticky="ew")
+        btns.grid(row=8, column=0, sticky="ew")
         btns.columnconfigure(3, weight=1)
 
         ttk.Button(btns, text="Taramayı Başlat", style="Accent.TButton", command=self.start_analysis).grid(row=0, column=0, sticky="w")
@@ -255,6 +259,67 @@ class FlameGUI(tk.Tk):
         self.result_text.grid(row=2, column=0, sticky="nsew")
         self.result_text.configure(state="disabled")
 
+    def _build_monitor_tab(self) -> None:
+        f = self.tab_monitor
+        f.columnconfigure(0, weight=1)
+        f.rowconfigure(1, weight=1)
+
+        top = ttk.Frame(f)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        top.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            top,
+            text="İzlenen iş ilanları",
+            font=("Segoe UI", 12, "bold")
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(top, text="Listeyi Yenile", command=self.refresh_monitor_tab).grid(row=0, column=1, sticky="e")
+
+        columns = ("title", "class", "risk", "fake", "useless", "quality", "seen", "changed")
+        self.monitor_tree = ttk.Treeview(f, columns=columns, show="headings", height=12)
+        headings = {
+            "title": "İlan",
+            "class": "Karar",
+            "risk": "Risk",
+            "fake": "Sahte",
+            "useless": "Gereksiz",
+            "quality": "Kalite",
+            "seen": "Tarama",
+            "changed": "Son Değişim",
+        }
+        widths = {
+            "title": 240,
+            "class": 190,
+            "risk": 60,
+            "fake": 60,
+            "useless": 70,
+            "quality": 60,
+            "seen": 60,
+            "changed": 260,
+        }
+        for col in columns:
+            self.monitor_tree.heading(col, text=headings[col])
+            self.monitor_tree.column(col, width=widths[col], anchor="w")
+        self.monitor_tree.grid(row=1, column=0, sticky="nsew")
+
+        scroll = ttk.Scrollbar(f, orient="vertical", command=self.monitor_tree.yview)
+        scroll.grid(row=1, column=1, sticky="ns")
+        self.monitor_tree.configure(yscrollcommand=scroll.set)
+
+        self.monitor_detail = tk.Text(
+            f, height=8, wrap="word",
+            bg=BG_CARD, fg=FG_LIGHT,
+            insertbackground=FG_LIGHT,
+            relief="flat",
+            highlightbackground=COLOR_BORDER,
+            highlightthickness=1,
+            padx=10, pady=10
+        )
+        self.monitor_detail.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.monitor_detail.configure(state="disabled")
+        self.monitor_tree.bind("<<TreeviewSelect>>", self._show_monitor_detail)
+        self.refresh_monitor_tab()
+
     def _build_help_tab(self) -> None:
         f = self.tab_help
         f.columnconfigure(0, weight=1)
@@ -271,33 +336,86 @@ class FlameGUI(tk.Tk):
         help_text.grid(row=0, column=0, sticky="nsew")
         
         content = """
-Flame & Starfall Akıllı Risk Analiz Sistemi Kılavuzu
+Flame Akıllı Risk Analiz Sistemi Kılavuzu
 
-Bu araç, şüpheli ilan bağlantılarını, ödeme sayfalarını ve gelen mesaj metinlerini pasif yöntemlerle inceler.
-Amacı, kullanıcıyı olası dolandırıcılık ve phishing (oltalama) senaryolarına karşı uyarmaktır.
+Bu araç; iş ilanı, ürün ilanı, ödeme bağlantısı ve gelen mesaj metinlerini pasif yöntemlerle inceler.
+Amacı kesin hüküm vermek değil, kullanıcıya anlaşılır bir risk ve başvuru kararı üretmektir.
 
-🛡️ ÖNE ÇIKAN AKILLI YETENEKLER:
+ÖNE ÇIKAN YETENEKLER:
 --------------------------------------------------
-1. Starfall Core C++ Motoru:
-   Levenshtein alan adı benzerliği ve kelime arama işlemlerini C++ hızında ve Türkçe karakter destekli gerçekleştirir.
-   
-2. Gelişmiş SSL & HTTPS Analizi:
-   Sadece "https://" protokolünün varlığına güvenmez. Let's Encrypt, ZeroSSL, Cloudflare gibi ücretsiz ve otomatik dağıtılan sertifikaları tespit eder, şüpheli marka taklit alan adlarıyla eşleşiyorsa risk puanını artırır.
+1. İş ilanı karar motoru:
+   İlanı "Başvurulabilir", "Dikkatli başvur / önce sor", "Doğrula, sonra başvur" veya "Başvurma" gibi net kararlarla özetler.
 
-3. HTML ve PDF Dosya Analizi:
-   Dosya yükleme desteği sayesinde şüpheli fatura, dekont, ekran görüntüsü veya phishing içeren HTML sayfaları yüklenip içindeki metinler ve linkler otomatik ayrıştırılarak taranabilir.
+2. Gereksiz veya sorunlu ilan analizi:
+   Tek ilanda çok fazla meslek istenmesi, maaş bilgisinin olmaması, ilanın çok eski görünmesi, belirsiz görev tanımı ve spam benzeri kalıpları işaretler.
 
-4. SQLite & XOR Şifreli Bellek İhbar Veritabanı:
-   Önceki dolandırıcılık vakalarında tespit edilen şüpheli IBAN ve telefon numaraları XOR şifreli olarak C++ belleğinde tutulur ve analizde eşleşirse doğrudan kritik seviyede risk uyarısı verir.
+3. Dolandırıcılık ve ödeme riski:
+   IBAN, Papara, banka hesabı kullandırma, ön ödeme, evrak/sigorta ücreti, kapora, WhatsApp'a taşıma ve kimlik/kod isteme akışlarını yakalar.
 
-⚠️ KULLANIM TAVSİYELERİ:
+4. HTML/PDF dosya analizi:
+   Link okunamazsa sayfayı tarayıcıdan HTML olarak kaydedip "Dosyadan Analiz Et" ile yükleyebilirsiniz.
+
+KULLANIM TAVSİYELERİ:
 --------------------------------------------------
-- SMS veya WhatsApp'tan gelen ödeme linklerine asla kart veya kimlik bilgilerinizi girmeyin.
-- Ödemeleri ve ilan onay işlemlerini yalnızca platformların kendi resmi mobil uygulamalarından veya tescilli resmi web sitelerinden yapın.
-- Şüpheli durumlarda ödeme makbuzunu, dekontu veya linkleri bu araçla taratıp elde ettiğiniz çıktıyı resmi mercilere başvururken kanıt olarak kullanabilirsiniz.
+- İş ilanı başvurusunda IBAN, Papara, banka hesabı veya ön ödeme istenirse başvurmayın.
+- Gerçek platformdaki ilan bile kötü niyetli olabilir; başvuru kararını ilan metniyle birlikte değerlendirin.
+- Maaş, çalışma modeli, şirket adı, görev kapsamı ve başvuru kanalını netleştirmeden kişisel bilgi paylaşmayın.
 """
         help_text.insert("1.0", content.strip())
         help_text.configure(state="disabled")
+
+    def refresh_monitor_tab(self) -> None:
+        if not hasattr(self, "monitor_tree"):
+            return
+        for item_id in self.monitor_tree.get_children():
+            self.monitor_tree.delete(item_id)
+        self._monitor_items: Dict[str, Dict[str, Any]] = {}
+        for item in self.monitor.list_items():
+            latest = item.get("latest", {})
+            changes = item.get("changes", [])
+            row_id = item.get("key", "")
+            self._monitor_items[row_id] = item
+            self.monitor_tree.insert(
+                "",
+                "end",
+                iid=row_id,
+                values=(
+                    item.get("title") or item.get("url") or "Başlıksız ilan",
+                    item.get("classification", "-"),
+                    latest.get("risk_score", "-"),
+                    f"{latest.get('fake_probability', 0)}%",
+                    f"{latest.get('useless_probability', 0)}%",
+                    f"{latest.get('quality_score', 0)}%",
+                    len(item.get("history", [])),
+                    "; ".join(changes[:2]) if changes else "-",
+                ),
+            )
+
+    def _show_monitor_detail(self, _event: Any = None) -> None:
+        selected = self.monitor_tree.selection()
+        if not selected:
+            return
+        item = self._monitor_items.get(selected[0], {})
+        latest = item.get("latest", {})
+        extracted = latest.get("extracted", {})
+        lines = [
+            f"Başlık: {item.get('title', '-')}",
+            f"URL: {item.get('url', '-')}",
+            f"Karar: {item.get('classification', '-')}",
+            f"İlk görülme: {item.get('first_seen', '-')}",
+            f"Son görülme: {item.get('last_seen', '-')}",
+            f"Risk: {latest.get('risk_score', '-')}/100 | Sahte: {latest.get('fake_probability', 0)}% | Gereksiz: {latest.get('useless_probability', 0)}% | Kalite: {latest.get('quality_score', 0)}%",
+            f"Çalışma modeli: {extracted.get('work_mode', '-')}",
+            f"Maaş/ücret: {extracted.get('salary_values', [])}",
+            f"Eksik alanlar: {', '.join(extracted.get('missing_fields', [])) or '-'}",
+            "Değişimler:",
+        ]
+        for change in item.get("changes", []):
+            lines.append(f"- {change}")
+        self.monitor_detail.configure(state="normal")
+        self.monitor_detail.delete("1.0", "end")
+        self.monitor_detail.insert("1.0", "\n".join(lines))
+        self.monitor_detail.configure(state="disabled")
 
     def load_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -340,21 +458,25 @@ Amacı, kullanıcıyı olası dolandırıcılık ve phishing (oltalama) senaryol
         self.status_var.set(f"Dosya yüklendi: {os.path.basename(path)}")
 
     def fill_sample(self) -> None:
-        self.url_var.set("https://trendyol-cuzdan-onay.xyz/odeme")
-        self.platform_var.set("trendyol")
+        self.url_var.set("https://kariyer-basvuru-onay.online/evden-paketleme")
+        self.platform_var.set("sahibinden")
+        self.listing_kind_var.set("job")
+        self.listing_title_var.set("Evden paketleme iş ilanı - günlük ödeme")
         self.text_input.delete("1.0", "end")
         self.text_input.insert("1.0", (
-            "Trendyol komisyon kesintisi yapmaması için ödemeyi WhatsApp üzerinden iletilen "
-            "cüzdan onay linkinden tamamlamanız gerekmektedir. Ödeme tamamlandıktan sonra "
-            "dekontu buradan paylaşın. IBAN: TR12 0000 0000 0000 0000 0000 00. Acele edin, "
-            "ürün başkasına satılmasın."
+            "Evden paketleme işi için hemen başlayabilirsiniz. Tecrübe şart değil, günlük ödeme var. "
+            "Başvuru için WhatsApp'tan yazın. Ödemeler IBAN üzerinden yapılacak, Papara hesabı açıp "
+            "para transferi başına komisyon kazanacaksınız. Evrak ve sigorta ücreti için önce küçük "
+            "bir ödeme gerekiyor. IBAN: TR12 0000 0000 0000 0000 0000 00."
         ))
         self.notes_input.delete("1.0", "end")
-        self.notes_input.insert("1.0", "Satıcı WhatsApp'a yönlendirdi ve cüzdan onay taklit linki attı.")
+        self.notes_input.insert("1.0", "İlan şirket adı ve resmi kariyer sayfası vermiyor; WhatsApp ve IBAN istiyor.")
         self.status_var.set("Örnek veri dolduruldu.")
 
     def clear_inputs(self) -> None:
         self.url_var.set("")
+        self.listing_kind_var.set("auto")
+        self.listing_title_var.set("")
         self.text_input.delete("1.0", "end")
         self.notes_input.delete("1.0", "end")
         self.status_var.set("Girişler temizlendi.")
@@ -366,6 +488,8 @@ Amacı, kullanıcıyı olası dolandırıcılık ve phishing (oltalama) senaryol
             notes=self.notes_input.get("1.0", "end").strip(),
             platform_hint=self.platform_var.get(),
             allow_network_fetch=self.fetch_var.get(),
+            listing_title=self.listing_title_var.get().strip(),
+            listing_kind=self.listing_kind_var.get(),
         )
         if not data.url and not data.pasted_text and not data.notes:
             messagebox.showwarning("Eksik Bilgi", "Analiz edebilmek için en azından bir URL veya metin girilmelidir.")
@@ -399,7 +523,15 @@ Amacı, kullanıcıyı olası dolandırıcılık ve phishing (oltalama) senaryol
         self.current_result = result
         self.score_var.set(f"Risk Skoru: {result.risk_score}/100")
         self.verdict_var.set(f"Karar: {result.verdict}")
-        self.summary_var.set(result.summary)
+        codes = {signal.code for signal in result.signals}
+        needs_html_upload = "JOB_LISTING_CONTENT_MISSING" in codes
+        if needs_html_upload:
+            self.summary_var.set(
+                "İlan metni okunamadı. Lütfen sayfayı tarayıcıdan HTML olarak indirip "
+                "'Dosyadan Analiz Et' ile yükleyin veya ilan açıklamasını metin kutusuna yapıştırın."
+            )
+        else:
+            self.summary_var.set(result.summary)
         
         # Karar rengini güncelle
         if result.risk_score >= 75:
@@ -412,11 +544,15 @@ Amacı, kullanıcıyı olası dolandırıcılık ve phishing (oltalama) senaryol
             self.score_label.configure(fg=COLOR_SUCCESS)
             self.verdict_label.configure(fg=COLOR_SUCCESS)
 
-        self.status_var.set("Analiz başarıyla tamamlandı.")
+        if needs_html_upload:
+            self.status_var.set("İlan metni okunamadı; HTML dosyası yükleyin veya açıklamayı yapıştırın.")
+        else:
+            self.status_var.set("Analiz başarıyla tamamlandı.")
         self.result_text.configure(state="normal")
         self.result_text.delete("1.0", "end")
         self.result_text.insert("end", self._format_result(result))
         self.result_text.configure(state="disabled")
+        self.refresh_monitor_tab()
         self.notebook.select(self.tab_result)
 
     def _format_result(self, result: AnalysisResult) -> str:
@@ -425,6 +561,63 @@ Amacı, kullanıcıyı olası dolandırıcılık ve phishing (oltalama) senaryol
         lines.append("=" * 80)
         lines.append(result.summary)
         lines.append("")
+        listing = result.listing_info or {}
+        if listing:
+            lines.append("İş İlanı / İlan Kalitesi:")
+            lines.append("-" * 80)
+            lines.append(f"Sınıflandırma: {listing.get('classification', '-')}")
+            lines.append(f"Başvuru kararı: {listing.get('apply_decision', '-')}")
+            lines.append(f"Karar nedeni: {listing.get('decision_reason', '-')}")
+            lines.append(f"Kaynak platform: {listing.get('source_platform', '-')}")
+            lines.append(f"Kaynak host: {listing.get('source_host', '-')}")
+            lines.append(f"Sahte iş ilanı olasılığı: {listing.get('fake_probability', 0)}%")
+            lines.append(f"Gereksiz/spam ilan olasılığı: {listing.get('useless_probability', 0)}%")
+            lines.append(f"Kalite puanı: {listing.get('quality_score', 0)}/100")
+            lines.append(f"Aşırı kapsam puanı: {listing.get('overload_score', 0)}/100")
+            if listing.get("detected_roles"):
+                lines.append(f"Algılanan rol alanları: {', '.join(listing.get('detected_roles', []))}")
+            if listing.get("red_flags"):
+                lines.append("Kırmızı bayraklar:")
+                for item in listing.get("red_flags", []):
+                    lines.append(f"  - {item}")
+            if listing.get("yellow_flags"):
+                lines.append("Dikkat bayrakları:")
+                for item in listing.get("yellow_flags", []):
+                    lines.append(f"  - {item}")
+            lines.append(f"Çalışma modeli: {listing.get('work_mode', '-')}")
+            details = listing.get("details", {})
+            if details:
+                if details.get("title"):
+                    lines.append(f"Pozisyon: {details.get('title')}")
+                if details.get("location"):
+                    lines.append(f"Lokasyon: {details.get('location')}")
+                if details.get("work_type"):
+                    lines.append(f"Çalışma şekli: {details.get('work_type')}")
+                if details.get("tools"):
+                    lines.append(f"Araçlar / konular: {', '.join(details.get('tools', [])[:12])}")
+                if details.get("sectors"):
+                    lines.append(f"Sektör / alan: {', '.join(details.get('sectors', [])[:8])}")
+                if details.get("application_channels"):
+                    lines.append(f"Başvuru kanalı: {', '.join(details.get('application_channels', []))}")
+                if details.get("qualifications"):
+                    lines.append("Aranan nitelikler:")
+                    for item in details.get("qualifications", [])[:6]:
+                        lines.append(f"  - {item}")
+                if details.get("responsibilities"):
+                    lines.append("Görev tanımı:")
+                    for item in details.get("responsibilities", [])[:6]:
+                        lines.append(f"  - {item}")
+            if listing.get("salary_values"):
+                lines.append(f"Maaş/ücret sinyali: {listing.get('salary_values')}")
+            if listing.get("missing_fields"):
+                lines.append(f"Eksik görünen alanlar: {', '.join(listing.get('missing_fields', []))}")
+            monitor = listing.get("monitor", {})
+            if monitor:
+                lines.append(f"İzleme anahtarı: {monitor.get('watch_key', '-')}")
+                lines.append(f"İzleme tarama sayısı: {monitor.get('seen_count', '-')}")
+                for change in monitor.get("changes", []):
+                    lines.append(f"- {change}")
+            lines.append("")
         lines.append("🛡️ Risk Sinyalleri:")
         lines.append("-" * 80)
         for i, sig in enumerate(result.signals, 1):

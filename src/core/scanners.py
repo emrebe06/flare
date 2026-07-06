@@ -185,13 +185,25 @@ class DomainTools:
         return host in official or any(host.endswith("." + d) for d in official)
 
     @staticmethod
+    def detect_platform(host: str) -> str:
+        host = (host or "").lower()
+        if not host:
+            return "unknown"
+        for platform, domains in OFFICIAL_DOMAINS.items():
+            if platform == "auto":
+                continue
+            if host in domains or any(host.endswith("." + domain) for domain in domains):
+                return platform
+        return "unknown"
+
+    @staticmethod
     def is_shortener(host: str) -> bool:
         h = (host or "").lower()
         return h in SHORTENER_DOMAINS
 
     @staticmethod
     def similarity_score(a: str, b: str) -> float:
-        # C++ Starfall Core ile ezilecek, fakat fallback olarak burada kalıyor.
+        # Hızlandırılmış tarayıcı varsa kullanılır; yoksa Python yedek motoru çalışır.
         try:
             from src.core.bindings import starfall_similarity
             return starfall_similarity(a, b)
@@ -311,7 +323,7 @@ class DomainTools:
 class TextScanner:
     @staticmethod
     def scan(text: str) -> Dict[str, Any]:
-        # C++ hızlı tarayıcı ile ezilebilir, fallback olarak burada kalıyor.
+        # Hızlandırılmış tarayıcı varsa kullanılır; yoksa Python yedek motoru çalışır.
         try:
             from src.core.bindings import starfall_scan_text
             cpp_res = starfall_scan_text(text)

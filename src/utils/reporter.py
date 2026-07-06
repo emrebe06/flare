@@ -17,7 +17,7 @@ class ReportWriter:
     @staticmethod
     def write_txt(result: AnalysisResult, path: str) -> None:
         lines: List[str] = []
-        lines.append(f"{result.app} (Powered by Starfall) Risk Raporu")
+        lines.append(f"{result.app} Risk Raporu")
         lines.append("=" * 60)
         lines.append(f"Tarih: {result.created_at}")
         lines.append(f"Skor: {result.risk_score}/100")
@@ -25,6 +25,51 @@ class ReportWriter:
         lines.append("")
         lines.append(result.summary)
         lines.append("")
+        if result.listing_info:
+            lines.append("İş İlanı / İlan Kalitesi")
+            lines.append("-" * 60)
+            lines.append(f"Sınıflandırma: {result.listing_info.get('classification', '-')}")
+            lines.append(f"Başvuru kararı: {result.listing_info.get('apply_decision', '-')}")
+            lines.append(f"Karar nedeni: {result.listing_info.get('decision_reason', '-')}")
+            lines.append(f"Kaynak platform: {result.listing_info.get('source_platform', '-')}")
+            lines.append(f"Kaynak host: {result.listing_info.get('source_host', '-')}")
+            lines.append(f"Sahte iş ilanı olasılığı: {result.listing_info.get('fake_probability', 0)}%")
+            lines.append(f"Gereksiz/spam ilan olasılığı: {result.listing_info.get('useless_probability', 0)}%")
+            lines.append(f"Kalite puanı: {result.listing_info.get('quality_score', 0)}/100")
+            lines.append(f"Aşırı kapsam puanı: {result.listing_info.get('overload_score', 0)}/100")
+            lines.append(f"Algılanan rol alanları: {', '.join(result.listing_info.get('detected_roles', [])) or '-'}")
+            if result.listing_info.get("red_flags"):
+                lines.append("Kırmızı bayraklar:")
+                for item in result.listing_info.get("red_flags", []):
+                    lines.append(f"- {item}")
+            if result.listing_info.get("yellow_flags"):
+                lines.append("Dikkat bayrakları:")
+                for item in result.listing_info.get("yellow_flags", []):
+                    lines.append(f"- {item}")
+            details = result.listing_info.get("details", {})
+            if details:
+                lines.append(f"Pozisyon: {details.get('title', '-')}")
+                lines.append(f"Lokasyon: {details.get('location', '-')}")
+                lines.append(f"Çalışma şekli: {details.get('work_type', '-')}")
+                lines.append(f"Araçlar / konular: {', '.join(details.get('tools', [])[:12]) or '-'}")
+                lines.append(f"Sektör / alan: {', '.join(details.get('sectors', [])[:8]) or '-'}")
+                lines.append(f"Başvuru kanalı: {', '.join(details.get('application_channels', [])) or '-'}")
+                if details.get("qualifications"):
+                    lines.append("Aranan nitelikler:")
+                    for item in details.get("qualifications", [])[:8]:
+                        lines.append(f"- {item}")
+                if details.get("responsibilities"):
+                    lines.append("Görev tanımı:")
+                    for item in details.get("responsibilities", [])[:8]:
+                        lines.append(f"- {item}")
+            lines.append(f"Eksik alanlar: {', '.join(result.listing_info.get('missing_fields', [])) or '-'}")
+            monitor = result.listing_info.get("monitor", {})
+            if monitor:
+                lines.append(f"İzleme anahtarı: {monitor.get('watch_key', '-')}")
+                lines.append(f"Tarama sayısı: {monitor.get('seen_count', '-')}")
+                for change in monitor.get("changes", []):
+                    lines.append(f"- {change}")
+            lines.append("")
         lines.append("Sinyaller")
         lines.append("-" * 60)
         for i, sig in enumerate(result.signals, 1):
@@ -91,6 +136,36 @@ class ReportWriter:
             """
 
         recs_html = "".join([f"<li>{ReportWriter._html(rec)}</li>" for rec in result.recommendations])
+        listing_html = ""
+        if result.listing_info:
+            listing = result.listing_info
+            missing = ", ".join(listing.get("missing_fields", [])) or "-"
+            monitor = listing.get("monitor", {})
+            changes = "".join(f"<li>{ReportWriter._html(change)}</li>" for change in monitor.get("changes", []))
+            listing_html = f"""
+        <h2>İş İlanı / İlan Kalitesi</h2>
+        <div class="listing-box">
+            <p><strong>Sınıflandırma:</strong> {ReportWriter._html(listing.get('classification', '-'))}</p>
+            <p><strong>Başvuru kararı:</strong> {ReportWriter._html(listing.get('apply_decision', '-'))}</p>
+            <p><strong>Karar nedeni:</strong> {ReportWriter._html(listing.get('decision_reason', '-'))}</p>
+            <p><strong>Kaynak platform:</strong> {ReportWriter._html(listing.get('source_platform', '-'))}</p>
+            <p><strong>Kaynak host:</strong> {ReportWriter._html(listing.get('source_host', '-'))}</p>
+            <p><strong>Sahte iş ilanı olasılığı:</strong> {ReportWriter._html(listing.get('fake_probability', 0))}%</p>
+            <p><strong>Gereksiz/spam ilan olasılığı:</strong> {ReportWriter._html(listing.get('useless_probability', 0))}%</p>
+            <p><strong>Kalite puanı:</strong> {ReportWriter._html(listing.get('quality_score', 0))}/100</p>
+            <p><strong>Aşırı kapsam puanı:</strong> {ReportWriter._html(listing.get('overload_score', 0))}/100</p>
+            <p><strong>Algılanan rol alanları:</strong> {ReportWriter._html(', '.join(listing.get('detected_roles', [])) or '-')}</p>
+            <p><strong>Pozisyon:</strong> {ReportWriter._html(listing.get('details', {}).get('title', '-'))}</p>
+            <p><strong>Lokasyon:</strong> {ReportWriter._html(listing.get('details', {}).get('location', '-'))}</p>
+            <p><strong>Çalışma şekli:</strong> {ReportWriter._html(listing.get('details', {}).get('work_type', '-'))}</p>
+            <p><strong>Araçlar / konular:</strong> {ReportWriter._html(', '.join(listing.get('details', {}).get('tools', [])[:12]) or '-')}</p>
+            <p><strong>Sektör / alan:</strong> {ReportWriter._html(', '.join(listing.get('details', {}).get('sectors', [])[:8]) or '-')}</p>
+            <p><strong>Çalışma modeli:</strong> {ReportWriter._html(listing.get('work_mode', '-'))}</p>
+            <p><strong>Eksik alanlar:</strong> {ReportWriter._html(missing)}</p>
+            <p><strong>İzleme anahtarı:</strong> {ReportWriter._html(monitor.get('watch_key', '-'))}</p>
+            <ul>{changes}</ul>
+        </div>
+            """
 
         verdict_class = "low"
         if result.risk_score >= 75:
@@ -226,6 +301,17 @@ class ReportWriter:
             color: #555;
             word-break: break-all;
         }}
+        .listing-box {{
+            background: #f8f9fa;
+            border: 1px solid #eaeaea;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }}
+        .listing-box p {{
+            margin: 6px 0;
+        }}
         
         ul.recs-list {{
             padding-left: 20px;
@@ -250,7 +336,7 @@ class ReportWriter:
     <div class="container">
         <header>
             <h1>🛡️ {ReportWriter._html(result.app)} Analiz Raporu</h1>
-            <span class="tech-tag">Starfall Core v{ReportWriter._html(result.version)}</span>
+            <span class="tech-tag">v{ReportWriter._html(result.version)}</span>
         </header>
         
         <div class="meta-info">
@@ -262,6 +348,7 @@ class ReportWriter:
             <div class="verdict-title">{ReportWriter._html(result.verdict)}</div>
             <div class="summary">{ReportWriter._html(result.summary)}</div>
         </div>
+        {listing_html}
         
         <h2>🔍 Tespit Edilen Risk Sinyalleri</h2>
         <div class="signals-container">
