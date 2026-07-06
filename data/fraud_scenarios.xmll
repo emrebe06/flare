@@ -1,0 +1,12 @@
+# Starfall lightweight fraud scenario model.
+# Format: scenario|id|title|severity|hit_weight|threshold|keyword;keyword;...
+scenario|job_iban_mule|Is ilaniyla IBAN veya hesap kullandirma|critical|18|28|is ilani;is basvurusu;evden paketleme;iban;papara;banka hesabi;hesabini kullandir;para transferi;komisyon
+scenario|job_upfront_fee|Is vaadiyle ucret veya evrak masrafi isteme|high|14|24|basvuru ucreti;egitim ucreti;evrak masrafi;sigorta girisi;ise alim;kapora;dekont
+scenario|listing_advance_payment|Ilan uzerinden kapora veya on odeme baskisi|high|13|22|ilan;kapora;on odeme;rezervasyon;ayirdim;son fiyat;iban;havale;eft
+scenario|fake_escrow_payment|Sahte guvenli odeme veya emanet odeme akisi|critical|16|26|guvenli odeme;param guvende;s-param;emanet odeme;escrow;odeme onay;cuzdan onay
+scenario|identity_otp_takeover|Kimlik veya tek kullanimlik kod kandirmasi|critical|16|24|kimlik;tc kimlik;onay kodu;sms kodu;dogrulama kodu;hesap dogrulama;hesabiniz kisitlandi
+scenario|courier_insurance_fee|Kurye kargo veya sigorta ucreti bahanesi|high|12|20|kurye;kargo sigortasi;sigorta ucreti;kargo ucreti;kurye gelecek;kapida guvenli odeme
+scenario|trusted_site_malicious_listing|Gercek sitede kotu niyetli ilan veya ilan sahibi|critical|15|28|sahibinden.com;dolap.com;letgo.com;ilan;iban;kapora;whatsapp;platform disi;elden degil;havale;eft
+scenario|fake_site_iban_fraud|Sahte site uzerinden IBAN veya odeme kandirmasi|critical|17|30|xyz;top;shop;site;online;odeme;iban;havale;eft;guvenli odeme;onay;destek
+scenario|malicious_listing_owner|Ilan sahibinin kotu niyet veya baski sinyali|high|13|24|kapora at;bekletmem;baskasi alacak;once odeme;whatsapp;elden olmaz;iban veriyorum;dekont at;acele
+scenario|scam_site_full_flow|Dolandirici site ve odeme akisi bir arada|critical|18|32|odeme;onay;destek;cuzdan;verify;iban;kimlik;cvv;kart bilgisi;3d secure;whatsapp
